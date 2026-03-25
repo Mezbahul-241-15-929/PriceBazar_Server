@@ -61,7 +61,46 @@ async function run() {
             const query = { _id: new ObjectId(id) }
             const result = await usersCollection.deleteOne(query);
             res.send(result);
-        })
+        });
+
+        //change user role to admin
+        app.patch('/users/:id', async (req, res) => {
+            try {
+                const id = req.params.id;
+                const { role } = req.body;
+
+                const filter = { _id: new ObjectId(id) };
+                const updateDoc = {
+                    $set: { role }
+                };
+
+                const result = await usersCollection.updateOne(filter, updateDoc);
+
+                res.send(result);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Failed to update role" });
+            }
+        });
+
+
+        // (Get role by email)
+        app.get('/users/:email/role', async (req, res) => {
+            try {
+                const email = req.params.email;
+
+                const user = await usersCollection.findOne({ email });
+
+                if (!user) {
+                    return res.status(404).send({ message: "User not found" });
+                }
+
+                res.send({ role: user.role || "user" });
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Failed to get user role" });
+            }
+        });
 
         //change passific data like lastSignInTime
         app.patch('/users', async (req, res) => {
@@ -76,6 +115,64 @@ async function run() {
             const result = await usersCollection.updateOne(filter, updatedDoc)
             res.send(result);
         })
+
+
+        // Product related APIs........................................
+
+        const productsCollection = client.db('PriceBazar').collection('products');
+
+
+        //post api for add new product
+        app.post("/products", async (req, res) => {
+            const data = req.body;
+
+            const today = new Date().toISOString().split("T")[0];
+
+            const product = {
+                ...data,
+                prices: [
+                    {
+                        date: today,
+                        price: parseFloat(data.price),
+                    },
+                ],
+                createdAt: new Date(),
+            };
+
+            delete product.price;
+
+            const result = await productsCollection.insertOne(product);
+            res.send(result);
+        });
+
+        //get api
+        app.get("/products", async (req, res) => {
+            try {
+                const result = await productsCollection
+                    .find({})
+                    .sort({ createdAt: -1 }) // latest first
+                    .toArray();
+
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch products" });
+            }
+        });
+
+        // delete api
+        app.delete("/products/:id", async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                const result = await productsCollection.deleteOne({
+                    _id: new ObjectId(id),
+                });
+
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to delete product" });
+            }
+        });
 
 
 

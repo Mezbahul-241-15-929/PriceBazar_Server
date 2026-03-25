@@ -175,6 +175,34 @@ async function run() {
         });
 
 
+        //get products for perticular gmail
+        app.get("/products", async (req, res) => {
+            try {
+                const email = req.query.email;
+
+                const query = {};
+
+                // 🔒 If email exists → filter by vendor
+                if (email) {
+                    // security check
+                    if (req.decoded.email !== email) {
+                        return res.status(403).send({ message: "Forbidden access" });
+                    }
+
+                    query.vendorEmail = email;
+                }
+
+                const result = await productsCollection
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.send(result);
+            } catch (error) {
+                res.status(500).send({ message: "Failed to fetch products" });
+            }
+        });
+
 
         // Send a ping to confirm a successful connection
         //await client.db("admin").command({ ping: 1 });

@@ -203,6 +203,62 @@ async function run() {
             }
         });
 
+        // put api
+        // PUT route to update a product
+        app.put('/products/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { itemName, marketName, image, description, date, prices, status, vendorEmail } = req.body;
+
+                // Validate MongoDB ObjectId
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({ message: 'Invalid product ID' });
+                }
+
+                // Build update object
+                const updateData = {
+                    itemName,
+                    marketName,
+                    image,
+                    description,
+                    date,
+                    prices, // array with price history
+                    status: status || 'pending',
+                    vendorEmail,
+                    updatedAt: new Date(),
+                };
+
+                // Update in MongoDB
+                const result = await productsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                // Check if product was found and updated
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Product not found'
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: 'Product updated successfully',
+                    modifiedCount: result.modifiedCount
+                });
+
+            } catch (error) {
+                console.error('Error updating product:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error updating product',
+                    error: error.message
+                });
+            }
+        });
+
+
 
         // Send a ping to confirm a successful connection
         //await client.db("admin").command({ ping: 1 });

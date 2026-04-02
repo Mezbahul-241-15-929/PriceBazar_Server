@@ -121,6 +121,10 @@ async function run() {
 
         const productsCollection = client.db('PriceBazar').collection('products');
 
+        // Advertisement related APIs........................................
+
+        const advertisementsCollection = client.db('PriceBazar').collection('advertisements');
+
 
         //post api for add new product
         app.post("/products", async (req, res) => {
@@ -253,6 +257,471 @@ async function run() {
                 res.status(500).json({
                     success: false,
                     message: 'Error updating product',
+                    error: error.message
+                });
+            }
+        });
+
+
+
+        // =============================================
+        // PRODUCTS - GET ALL (ADMIN)
+        // =============================================
+        app.get('/products/all', async (req, res) => {
+            try {
+                const products = await productsCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.json(products);
+
+            } catch (error) {
+                console.error('Error fetching all products:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching products',
+                    error: error.message
+                });
+            }
+        });
+
+        // =============================================
+        // PRODUCTS - UPDATE STATUS (ADMIN)
+        // =============================================
+        app.patch('/products/:id/status', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { status, rejectionReason } = req.body;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid product ID'
+                    });
+                }
+
+                if (!['pending', 'approved', 'rejected'].includes(status)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid status. Must be pending, approved, or rejected'
+                    });
+                }
+
+                const updateData = {
+                    status,
+                    updatedAt: new Date(),
+                };
+
+                if (status === 'rejected' && rejectionReason) {
+                    updateData.rejectionReason = rejectionReason;
+                }
+
+                const result = await productsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Product not found'
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: `Product ${status} successfully`,
+                    modifiedCount: result.modifiedCount
+                });
+
+            } catch (error) {
+                console.error('Error updating product status:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error updating product status',
+                    error: error.message
+                });
+            }
+        });
+
+        // =============================================
+        // ADVERTISEMENTS - GET ALL (ADMIN)
+        // =============================================
+        app.get('/advertisements/all', async (req, res) => {
+            try {
+                const advertisements = await advertisementsCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.json(advertisements);
+
+            } catch (error) {
+                console.error('Error fetching all advertisements:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching advertisements',
+                    error: error.message
+                });
+            }
+        });
+
+        // =============================================
+        // ADVERTISEMENTS - UPDATE STATUS (ADMIN)
+        // =============================================
+        app.patch('/advertisements/:id/status', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { status } = req.body;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid advertisement ID'
+                    });
+                }
+
+                if (!['pending', 'approved', 'rejected'].includes(status)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid status. Must be pending, approved, or rejected'
+                    });
+                }
+
+                const result = await advertisementsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status, updatedAt: new Date() } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Advertisement not found'
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: `Advertisement ${status} successfully`,
+                    modifiedCount: result.modifiedCount
+                });
+
+            } catch (error) {
+                console.error('Error updating advertisement status:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error updating advertisement status',
+                    error: error.message
+                });
+            }
+        });
+
+
+
+        // .............................................................................................................................
+
+        // ==========================================
+        // POST - CREATE ADVERTISEMENT
+        // ==========================================
+        app.post('/advertisements', async (req, res) => {
+            try {
+                const { adTitle, shortDescription, image, vendorEmail, vendorName, status } = req.body;
+
+                // Validate required fields
+                if (!adTitle || !shortDescription || !vendorEmail) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Missing required fields: adTitle, shortDescription, vendorEmail'
+                    });
+                }
+
+                const newAdvertisement = {
+                    adTitle: adTitle.trim(),
+                    shortDescription: shortDescription.trim(),
+                    image: image || '',
+                    vendorEmail,
+                    vendorName,
+                    status: status || 'pending',
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                };
+
+                const result = await advertisementsCollection.insertOne(newAdvertisement);
+
+                res.json({
+                    success: true,
+                    message: 'Advertisement created successfully',
+                    data: { _id: result.insertedId, ...newAdvertisement }
+                });
+
+            } catch (error) {
+                console.error('Error creating advertisement:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error creating advertisement',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // GET - FETCH ADS BY VENDOR EMAIL
+        // ==========================================
+        app.get('/advertisements', async (req, res) => {
+            try {
+                const { email } = req.query;
+
+                if (!email) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Email query parameter is required'
+                    });
+                }
+
+                const advertisements = await advertisementsCollection
+                    .find({ vendorEmail: email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.json(advertisements);
+
+            } catch (error) {
+                console.error('Error fetching advertisements:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching advertisements',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // GET - FETCH ALL ADS (ADMIN)
+        // ==========================================
+        app.get('/advertisements/all', async (req, res) => {
+            try {
+                const advertisements = await advertisementsCollection
+                    .find({})
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.json(advertisements);
+
+            } catch (error) {
+                console.error('Error fetching all advertisements:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching advertisements',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // GET - FETCH SINGLE AD BY ID
+        // ==========================================
+        app.get('/advertisements/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid advertisement ID'
+                    });
+                }
+
+                const advertisement = await advertisementsCollection.findOne({
+                    _id: new ObjectId(id)
+                });
+
+                if (!advertisement) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Advertisement not found'
+                    });
+                }
+
+                res.json(advertisement);
+
+            } catch (error) {
+                console.error('Error fetching advertisement:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching advertisement',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // PUT - UPDATE ADVERTISEMENT
+        // ==========================================
+        app.put('/advertisements/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { adTitle, shortDescription, image, status } = req.body;
+
+                // Validate MongoDB ObjectId
+                if (!ObjectId.isValid(id)) {
+                    console.error("Invalid advertisement ID:", id);
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid advertisement ID'
+                    });
+                }
+
+                // Validate required fields
+                if (!adTitle || !shortDescription) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Missing required fields: adTitle, shortDescription'
+                    });
+                }
+
+                // Build update object
+                const updateData = {
+                    adTitle: adTitle.trim(),
+                    shortDescription: shortDescription.trim(),
+                    image: image || '',
+                    status: status || 'pending',
+                    updatedAt: new Date(),
+                };
+
+                console.log("Updating advertisement with ID:", id);
+                console.log("Update data:", updateData);
+
+                // Update in MongoDB
+                const result = await advertisementsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updateData }
+                );
+
+                console.log("Update result:", result);
+
+                // Check if advertisement was found
+                if (result.matchedCount === 0) {
+                    console.error("Advertisement not found with ID:", id);
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Advertisement not found'
+                    });
+                }
+
+                // Success response
+                res.json({
+                    success: true,
+                    message: 'Advertisement updated successfully',
+                    modifiedCount: result.modifiedCount,
+                    acknowledged: result.acknowledged
+                });
+
+            } catch (error) {
+                console.error('Error updating advertisement:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error updating advertisement',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // DELETE - DELETE ADVERTISEMENT
+        // ==========================================
+        app.delete('/advertisements/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                // Validate MongoDB ObjectId
+                if (!ObjectId.isValid(id)) {
+                    console.error("Invalid advertisement ID:", id);
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid advertisement ID'
+                    });
+                }
+
+                console.log("Deleting advertisement with ID:", id);
+
+                // Delete from MongoDB
+                const result = await advertisementsCollection.deleteOne({
+                    _id: new ObjectId(id)
+                });
+
+                console.log("Delete result:", result);
+
+                // Check if advertisement was found
+                if (result.deletedCount === 0) {
+                    console.error("Advertisement not found with ID:", id);
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Advertisement not found'
+                    });
+                }
+
+                // Success response
+                res.json({
+                    success: true,
+                    message: 'Advertisement deleted successfully',
+                    deletedCount: result.deletedCount
+                });
+
+            } catch (error) {
+                console.error('Error deleting advertisement:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error deleting advertisement',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // PATCH - UPDATE AD STATUS (ADMIN)
+        // ==========================================
+        app.patch('/advertisements/:id/status', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { status } = req.body;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid advertisement ID'
+                    });
+                }
+
+                if (!['pending', 'approved', 'rejected'].includes(status)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid status. Must be pending, approved, or rejected'
+                    });
+                }
+
+                const result = await advertisementsCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { status, updatedAt: new Date() } }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Advertisement not found'
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    message: 'Advertisement status updated successfully'
+                });
+
+            } catch (error) {
+                console.error('Error updating advertisement status:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error updating status',
                     error: error.message
                 });
             }

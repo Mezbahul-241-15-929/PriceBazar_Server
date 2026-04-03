@@ -729,6 +729,139 @@ async function run() {
 
 
 
+        // .........................................................Product
+
+
+
+
+
+
+
+
+        //..................
+
+        // Add this at the top of your Express server file (app.js or server.js)
+        const { ObjectId } = require('mongodb');
+
+        // ENDPOINT 1: Get all products with filtering & sorting
+        app.get('/api/products/all', async (req, res) => {
+            try {
+                const {
+                    status = 'approved',
+                    sort = 'latest',
+                    order = 'desc',
+                    dateFrom,
+                    dateTo
+                } = req.query;
+
+                console.log('Fetching products with filters:', { status, sort, order, dateFrom, dateTo });
+
+                // Build MongoDB query
+                let query = { status };
+
+                // Add date range filter
+                if (dateFrom || dateTo) {
+                    query.date = {};
+
+                    if (dateFrom) {
+                        const fromDate = new Date(dateFrom);
+                        fromDate.setHours(0, 0, 0, 0);
+                        query.date.$gte = fromDate;
+                        console.log('From date filter:', fromDate);
+                    }
+
+                    if (dateTo) {
+                        const toDate = new Date(dateTo);
+                        toDate.setHours(23, 59, 59, 999);
+                        query.date.$lte = toDate;
+                        console.log('To date filter:', toDate);
+                    }
+                }
+
+                // Determine sort field and order
+                const sortOrder = order === 'asc' ? 1 : -1;
+                let sortField = 'createdAt'; // default
+
+                if (sort === 'price') {
+                    // For price sorting, fetch all matching documents first
+                    let products = await productsCollection
+                        .find(query)
+                        .toArray();
+
+                    console.log(`Found ${products.length} products before price sorting`);
+
+                    // Add calculated latestPrice field
+                    products = products.map(product => {
+                        let latestPrice = 0;
+                        if (product.newPrices && product.newPrices.length > 0) {
+                            const prices = product.newPrices.map(p => p.price);
+                            latestPrice = Math.min(...prices); // Get lowest price
+                        }
+                        return { ...product, latestPrice };
+                    });
+
+                    // Sort by latestPrice
+                    products.sort((a, b) => {
+                        return sortOrder === 1
+                            ? a.latestPrice - b.latestPrice
+                            : b.latestPrice - a.latestPrice;
+                    });
+
+                    // Remove temporary field
+                    products = products.map(({ latestPrice, ...product }) => product);
+
+                    console.log(`Returning ${products.length} products after price sorting`);
+                    return res.json(products);
+                } else if (sort === 'date') {
+                    sortField = 'date';
+                } else {
+                    // sort === 'latest'
+                    sortField = 'createdAt';
+                }
+
+                // For non-price sorting, use MongoDB sort
+                const products = await productsCollection
+                    .find(query)
+                    .sort({ [sortField]: sortOrder })
+                    .toArray();
+
+                console.log(`Found ${products.length} products`);
+                res.json(products);
+
+            } catch (error) {
+                console.error('Error fetching products:', error);
+                res.status(500).json({ message: 'Error fetching products', error: error.message });
+            }
+        });
+
+
+        // ENDPOINT 2: Get single product details
+        app.get('/api/products/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                // Validate MongoDB ObjectId
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({ message: 'Invalid product ID' });
+                }
+
+                const product = await productsCollection
+                    .findOne({ _id: new ObjectId(id) });
+
+                if (!product) {
+                    return res.status(404).json({ message: 'Product not found' });
+                }
+
+                console.log(`Fetched product: ${product.itemName}`);
+                res.json(product);
+
+            } catch (error) {
+                console.error('Error fetching product:', error);
+                res.status(500).json({ message: 'Error fetching product', error: error.message });
+            }
+        });
+
+
         // Send a ping to confirm a successful connection
         //await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");

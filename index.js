@@ -466,36 +466,6 @@ async function run() {
         });
 
         // ==========================================
-        // GET - FETCH ADS BY VENDOR EMAIL
-        // ==========================================
-        app.get('/advertisements', async (req, res) => {
-            try {
-                const { email } = req.query;
-
-                if (!email) {
-                    return res.status(400).json({
-                        success: false,
-                        message: 'Email query parameter is required'
-                    });
-                }
-
-                const advertisements = await advertisementsCollection
-                    .find({ vendorEmail: email })
-                    .sort({ createdAt: -1 })
-                    .toArray();
-
-                res.json(advertisements);
-
-            } catch (error) {
-                console.error('Error fetching advertisements:', error);
-                res.status(500).json({
-                    success: false,
-                    message: 'Error fetching advertisements',
-                    error: error.message
-                });
-            }
-        });
-
         // ==========================================
         // GET - FETCH ALL ADS (ADMIN)
         // ==========================================
@@ -550,6 +520,72 @@ async function run() {
                 res.status(500).json({
                     success: false,
                     message: 'Error fetching advertisement',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // GET - FETCH ADS BY VENDOR EMAIL
+        // ==========================================
+        app.get('/advertisements', async (req, res) => {
+            try {
+                const { email } = req.query;
+
+                if (!email) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Email query parameter is required'
+                    });
+                }
+
+                const advertisements = await advertisementsCollection
+                    .find({ vendorEmail: email })
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.json(advertisements);
+
+            } catch (error) {
+                console.error('Error fetching advertisements:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching advertisements',
+                    error: error.message
+                });
+            }
+        });
+
+        // ==========================================
+        // GET - FETCH ADS BY STATUS
+        // ==========================================
+        app.get('/advertisements', async (req, res) => {
+            try {
+                const { email, status } = req.query;
+                const query = {};
+
+                // If status is provided, filter by status
+                if (status) {
+                    query.status = status;
+                }
+
+                // If email is provided (vendor specific), filter by vendor email
+                if (email) {
+                    query.vendorEmail = email;
+                }
+
+                const advertisements = await advertisementsCollection
+                    .find(query)
+                    .sort({ createdAt: -1 })
+                    .toArray();
+
+                res.json(advertisements);
+
+            } catch (error) {
+                console.error('Error fetching advertisements:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching advertisements',
                     error: error.message
                 });
             }
@@ -729,13 +765,92 @@ async function run() {
 
 
 
+
+        // GET all advertisements with filtering
+        app.get('/api/advertisements', async (req, res) => {
+            try {
+                const { status = 'approved', email, limit = 100, skip = 0 } = req.query;
+                const filter = {};
+
+                if (status !== 'all') {
+                    filter.status = status;
+                }
+
+                if (email) {
+                    filter.vendorEmail = email;
+                }
+
+                const advertisements = await advertisementsCollection
+                    .find(filter)
+                    .sort({ createdAt: -1 })
+                    .limit(parseInt(limit))
+                    .skip(parseInt(skip))
+                    .toArray();
+
+                const total = await advertisementsCollection.countDocuments(filter);
+
+                res.json({
+                    success: true,
+                    data: advertisements,
+                    total: total,
+                    limit: parseInt(limit),
+                    skip: parseInt(skip)
+                });
+            } catch (error) {
+                console.error('Error fetching advertisements:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Failed to fetch advertisements',
+                    error: error.message
+                });
+            }
+        });
+
+
+        // ✅ ENDPOINT 2: GET SINGLE ADVERTISEMENT BY ID
+        // ============================================================================
+
+        app.get('/api/advertisements/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                // Validate ObjectId format
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid advertisement ID format'
+                    });
+                }
+
+                const advertisement = await advertisementsCollection.findOne({
+                    _id: new ObjectId(id)
+                });
+
+                if (!advertisement) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Advertisement not found'
+                    });
+                }
+
+                res.json({
+                    success: true,
+                    data: advertisement
+                });
+            } catch (error) {
+                console.error('Error fetching advertisement:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Failed to fetch advertisement',
+                    error: error.message
+                });
+            }
+        });
+
+
+
+
         // .........................................................Product
-
-
-
-
-
-
 
 
         //..................

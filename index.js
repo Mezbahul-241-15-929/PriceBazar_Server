@@ -130,7 +130,8 @@ async function run() {
         app.post("/products", async (req, res) => {
             const data = req.body;
 
-            const today = new Date().toISOString().split("T")[0];
+            const today = new Date().toISOString();
+
 
             const product = {
                 ...data,
@@ -975,6 +976,146 @@ async function run() {
                 res.status(500).json({ message: 'Error fetching product', error: error.message });
             }
         });
+
+
+        //.......................................................review..................
+        const reviewsCollection = client.db('PriceBazar').collection('reviews');
+        // GET all reviews for a product
+        app.get('/api/reviews/:productId', async (req, res) => {
+            try {
+                const { productId } = req.params;
+                const reviews = await reviewsCollection
+                    .find({ productId })
+                    .sort({ timestamp: -1 })
+                    .toArray();
+
+                res.json(reviews || []);
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // POST new review
+        app.post('/api/reviews', async (req, res) => {
+            try {
+                const { productId, userId, author, email, text, rating } = req.body;
+
+                if (!productId || !userId || !author || !email || !text || !rating) {
+                    return res.status(400).json({ error: 'Missing required fields' });
+                }
+
+                if (rating < 1 || rating > 5) {
+                    return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+                }
+
+                const existingReview = await reviewsCollection
+                    .findOne({ productId, userId });
+
+                if (existingReview) {
+                    return res.status(409).json({ error: 'You have already reviewed this product' });
+                }
+
+                const review = {
+                    productId,
+                    userId,
+                    author,
+                    email,
+                    text,
+                    rating,
+                    timestamp: new Date(),
+                    date: new Date().toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    })
+                };
+
+                const result = await reviewsCollection.insertOne(review);
+
+                res.status(201).json({
+                    _id: result.insertedId,
+                    ...review
+                });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // PUT update review
+        app.put('/api/reviews/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { email, text, rating } = req.body;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({ error: 'Invalid review ID' });
+                }
+
+                const review = await reviewsCollection
+                    .findOne({ _id: new ObjectId(id) });
+
+                if (!review) {
+                    return res.status(404).json({ error: 'Review not found' });
+                }
+
+                if (review.email !== email) {
+                    return res.status(403).json({ error: 'Not authorized to update this review' });
+                }
+
+                if (rating && (rating < 1 || rating > 5)) {
+                    return res.status(400).json({ error: 'Rating must be between 1 and 5' });
+                }
+
+                const updatedReview = {
+                    text: text || review.text,
+                    rating: rating || review.rating,
+                    updatedAt: new Date()
+                };
+
+                await reviewsCollection
+                    .updateOne({ _id: new ObjectId(id) }, { $set: updatedReview });
+
+                const updated = await reviewsCollection
+                    .findOne({ _id: new ObjectId(id) });
+
+                res.json(updated);
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // DELETE review
+        app.delete('/api/reviews/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+                const { email } = req.body;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({ error: 'Invalid review ID' });
+                }
+
+                const review = await reviewsCollection
+                    .findOne({ _id: new ObjectId(id) });
+
+                if (!review) {
+                    return res.status(404).json({ error: 'Review not found' });
+                }
+
+                if (review.email !== email) {
+                    return res.status(403).json({ error: 'Not authorized to delete this review' });
+                }
+
+                await reviewsCollection
+                    .deleteOne({ _id: new ObjectId(id) });
+
+                res.json({ message: 'Review deleted successfully', _id: id });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
 
 
         // Send a ping to confirm a successful connection

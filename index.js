@@ -1118,6 +1118,75 @@ async function run() {
 
 
 
+        // ========== WATCHLIST API ==========-------------------------------------------------------
+
+                const watchlistCollection = client.db('PriceBazar').collection('watchlist');
+
+
+        // GET user's watchlist
+        app.get('/api/watchlist/:userId', async (req, res) => {
+            try {
+                const { userId } = req.params;
+                const watchlist = await watchlistCollection
+                    .findOne({ userId });
+
+                res.json(watchlist || { userId, products: [] });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // POST/ADD to watchlist
+        app.post('/api/watchlist', async (req, res) => {
+            try {
+                const { userId, productId } = req.body;
+
+                if (!userId || !productId) {
+                    return res.status(400).json({ error: 'Missing userId or productId' });
+                }
+
+                const watchlist = await watchlistCollection
+                    .findOne({ userId });
+
+                if (!watchlist) {
+                    const result = await watchlistCollection
+                        .insertOne({ userId, products: [productId], createdAt: new Date() });
+                    return res.json({ message: 'Added to watchlist', _id: result.insertedId });
+                }
+
+                if (watchlist.products.includes(productId)) {
+                    return res.status(409).json({ error: 'Already in watchlist' });
+                }
+
+                await watchlistCollection
+                    .updateOne({ userId }, { $push: { products: productId } });
+
+                res.json({ message: 'Added to watchlist' });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+        // DELETE from watchlist
+        app.delete('/api/watchlist/:userId/:productId', async (req, res) => {
+            try {
+                const { userId, productId } = req.params;
+
+                if (!userId || !productId) {
+                    return res.status(400).json({ error: 'Missing userId or productId' });
+                }
+
+                await watchlistCollection
+                    .updateOne({ userId }, { $pull: { products: productId } });
+
+                res.json({ message: 'Removed from watchlist' });
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
+
+
+
         // Send a ping to confirm a successful connection
         //await client.db("admin").command({ ping: 1 });
         console.log("Pinged your deployment. You successfully connected to MongoDB!");
@@ -1143,3 +1212,5 @@ app.get('/data', (req, res) => {
 app.listen(port, () => {
     console.log(`Example app listening on port ${port}`)
 })
+
+

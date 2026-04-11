@@ -1120,7 +1120,7 @@ async function run() {
 
         // ========== WATCHLIST API ==========-------------------------------------------------------
 
-                const watchlistCollection = client.db('PriceBazar').collection('watchlist');
+        const watchlistCollection = client.db('PriceBazar').collection('watchlist');
 
 
         // GET user's watchlist
@@ -1184,6 +1184,8 @@ async function run() {
                 res.status(500).json({ error: error.message });
             }
         });
+
+        //...............................................................................................
 
 
 

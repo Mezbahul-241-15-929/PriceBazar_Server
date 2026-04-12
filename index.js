@@ -208,6 +208,27 @@ async function run() {
             }
         });
 
+        app.get('/product/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({ success: false, message: 'Invalid product ID' });
+                }
+
+                const product = await productsCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!product) {
+                    return res.status(404).json({ success: false, message: 'Product not found' });
+                }
+
+                res.json({ success: true, data: product });
+            } catch (error) {
+                console.error('Error fetching product:', error);
+                res.status(500).json({ success: false, message: 'Failed to fetch product', error: error.message });
+            }
+        });
+
         // put api
         // PUT route to update a product
         app.put('/products/:id', async (req, res) => {
@@ -1185,7 +1206,24 @@ async function run() {
             }
         });
 
-        //...............................................................................................
+        //..................Stripe.............................................................................
+        app.post("/create-checkout-session", async (req, res) => {
+            const session = await stripe.checkout.sessions.create({
+
+                ui_mode: "elements",
+                line_items: [
+                    {
+                        // Provide the exact Price ID (for example, price_1234) of the product you want to sell
+                        price: "{{PRICE_ID}}",
+                        quantity: 1,
+                    },
+                ],
+                mode: 'payment',
+                return_url: `${YOUR_DOMAIN}/complete?session_id={CHECKOUT_SESSION_ID}`,
+            });
+
+            res.send({ clientSecret: session.client_secret });
+        });
 
 
 

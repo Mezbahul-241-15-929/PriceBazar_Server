@@ -1,14 +1,17 @@
 const express = require('express')
 const cors = require('cors')
+
+require('dotenv').config();
+
 const app = express()
 const port = process.env.PORT || 3000
 app.use(express.json());
 
+const stripe = require('stripe')(process.env.PAYMENT_GATEWAY_KEY);
+
 app.use(cors())
 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
-
-require('dotenv').config();
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.1jlx3rd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
 
 //const uri = "mongodb+srv://mezbahul:2A3NW9ZuLLtGXaGu@cluster0.1jlx3rd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
@@ -1207,25 +1210,250 @@ async function run() {
         });
 
         //..................Stripe.............................................................................
-        app.post("/create-checkout-session", async (req, res) => {
-            const session = await stripe.checkout.sessions.create({
+        
+        // Create Payment Intent endpoint
+        app.post("/create-payment-intent", async (req, res) => {
+            try {
+                const { amountInCents, product_id } = req.body;
 
-                ui_mode: "elements",
-                line_items: [
-                    {
-                        // Provide the exact Price ID (for example, price_1234) of the product you want to sell
-                        price: "{{PRICE_ID}}",
-                        quantity: 1,
-                    },
-                ],
-                mode: 'payment',
-                return_url: `${YOUR_DOMAIN}/complete?session_id={CHECKOUT_SESSION_ID}`,
-            });
+                // Validate required fields
+                if (!amountInCents || !product_id) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Missing required fields: amountInCents, product_id'
+                    });
+                }
 
-            res.send({ clientSecret: session.client_secret });
+                // Validate amount is a positive number
+                if (typeof amountInCents !== 'number' || amountInCents <= 0) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'amountInCents must be a positive number'
+                    });
+                }
+
+                // Create payment intent
+                const paymentIntent = await stripe.paymentIntents.create({
+                    amount: Math.round(amountInCents), // Stripe requires amount in cents as integer
+                    currency: 'usd',
+                    metadata: {
+                        product_id: product_id.toString()
+                    }
+                });
+
+                res.json({
+                    success: true,
+                    clientSecret: paymentIntent.client_secret,
+                    paymentIntentId: paymentIntent.id
+                });
+
+            } catch (error) {
+                console.error('Error creating payment intent:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error creating payment intent',
+                    error: error.message
+                });
+            }
         });
 
+        // Checkout Session endpoint (legacy)
+        app.post("/create-checkout-session", async (req, res) => {
+            try {
+                const { amountInCents, product_id } = req.body;
 
+                if (!amountInCents || !product_id) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Missing required fields'
+                    });
+                }
+
+                const session = await stripe.checkout.sessions.create({
+                    ui_mode: "embedded",
+                    line_items: [
+                        {
+                            price_data: {
+                                currency: 'usd',
+                                product_data: {
+                                    name: `Product: ${product_id}`,
+                                },
+                                unit_amount: Math.round(amountInCents),
+                            },
+                            quantity: 1,
+                        },
+                    ],
+                    mode: 'payment',
+                    return_url: `${process.env.CLIENT_URL || 'http://localhost:3000'}/complete?session_id={CHECKOUT_SESSION_ID}`,
+                });
+
+                res.json({
+                    success: true,
+                    clientSecret: session.client_secret,
+                    sessionId: session.id
+                });
+
+            } catch (error) {
+                console.error('Error creating checkout session:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error creating checkout session',
+                    error: error.message
+                });
+            }
+        });
+
+        // ========== ORDERS COLLECTION & ENDPOINTS ==========
+        const ordersCollection = client.db('PriceBazar').collection('orders');
+
+        // Create index for faster queries
+        await ordersCollection.createIndex({ userEmail: 1, orderDate: -1 });
+
+        // Confirm payment and create order
+        app.post('/confirm-payment', async (req, res) => {
+            try {
+                const { productId, userEmail, transactionId, amount, productData, paymentStatus } = req.body;
+
+                // Validate required fields
+                if (!productId || !userEmail || !transactionId || !amount) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Missing required fields'
+                    });
+                }
+
+                // Create order document
+                const order = {
+                    productId: new ObjectId(productId),
+                    productName: productData?.name || productData?.itemName || 'Unknown Product',
+                    marketName: productData?.marketName || 'Unknown Market',
+                    productImage: productData?.image || '',
+                    userEmail,
+                    transactionId,
+                    amount: parseFloat(amount),
+                    paymentStatus: paymentStatus || 'completed',
+                    orderDate: new Date(),
+                    createdAt: new Date(),
+                };
+
+                // Insert order to database
+                const result = await ordersCollection.insertOne(order);
+
+                res.json({
+                    success: true,
+                    message: 'Order created successfully',
+                    orderId: result.insertedId,
+                    order: { ...order, _id: result.insertedId }
+                });
+
+            } catch (error) {
+                console.error('Error confirming payment:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error creating order',
+                    error: error.message
+                });
+            }
+        });
+
+        // Get all orders for a user by email
+        app.get('/orders/:email', async (req, res) => {
+            try {
+                const { email } = req.params;
+
+                if (!email) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Email is required'
+                    });
+                }
+
+                const orders = await ordersCollection
+                    .find({ userEmail: email })
+                    .sort({ orderDate: -1 })
+                    .toArray();
+
+                res.json(orders || []);
+
+            } catch (error) {
+                console.error('Error fetching orders:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching orders',
+                    error: error.message
+                });
+            }
+        });
+
+        // Get specific order details by ID
+        app.get('/order/:id', async (req, res) => {
+            try {
+                const { id } = req.params;
+
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({
+                        success: false,
+                        message: 'Invalid order ID'
+                    });
+                }
+
+                const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+
+                if (!order) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Order not found'
+                    });
+                }
+
+                res.json(order);
+
+            } catch (error) {
+                console.error('Error fetching order:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching order',
+                    error: error.message
+                });
+            }
+        });
+
+        // Get order statistics for admin
+        app.get('/orders-stats/:email', async (req, res) => {
+            try {
+                const { email } = req.params;
+
+                const stats = await ordersCollection.aggregate([
+                    { $match: { userEmail: email } },
+                    {
+                        $group: {
+                            _id: null,
+                            totalOrders: { $sum: 1 },
+                            totalSpent: { $sum: '$amount' },
+                            avgOrderValue: { $avg: '$amount' }
+                        }
+                    }
+                ]).toArray();
+
+                if (stats.length === 0) {
+                    return res.json({
+                        totalOrders: 0,
+                        totalSpent: 0,
+                        avgOrderValue: 0
+                    });
+                }
+
+                res.json(stats[0]);
+
+            } catch (error) {
+                console.error('Error fetching order statistics:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching statistics',
+                    error: error.message
+                });
+            }
+        });
 
         // Send a ping to confirm a successful connection
         //await client.db("admin").command({ ping: 1 });

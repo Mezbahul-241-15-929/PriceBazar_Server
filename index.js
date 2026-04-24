@@ -153,47 +153,16 @@ async function run() {
             res.send(result);
         });
 
-        //get api
-        app.get("/products", async (req, res) => {
-            try {
-                const result = await productsCollection
-                    .find({})
-                    .sort({ createdAt: -1 }) // latest first
-                    .toArray();
-
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to fetch products" });
-            }
-        });
-
-        // delete api
-        app.delete("/products/:id", async (req, res) => {
-            try {
-                const id = req.params.id;
-
-                const result = await productsCollection.deleteOne({
-                    _id: new ObjectId(id),
-                });
-
-                res.send(result);
-            } catch (error) {
-                res.status(500).send({ message: "Failed to delete product" });
-            }
-        });
-
-
-        //get products for perticular gmail
+        //get api - returns all products or filtered by vendor email
         app.get("/products", async (req, res) => {
             try {
                 const email = req.query.email;
-
                 const query = {};
 
-                // 🔒 If email exists → filter by vendor
+                // 🔒 If email exists → filter by vendor (with security check)
                 if (email) {
-                    // security check
-                    if (req.decoded.email !== email) {
+                    // security check - verify the user is requesting their own products
+                    if (req.decoded && req.decoded.email !== email) {
                         return res.status(403).send({ message: "Forbidden access" });
                     }
 
@@ -208,6 +177,51 @@ async function run() {
                 res.send(result);
             } catch (error) {
                 res.status(500).send({ message: "Failed to fetch products" });
+            }
+        });
+
+        // delete api
+        app.delete("/products/:id", async (req, res) => {
+            try {
+                const id = req.params.id;
+                const { vendorEmail } = req.body;
+
+                // Validate MongoDB ObjectId
+                if (!ObjectId.isValid(id)) {
+                    return res.status(400).json({ message: 'Invalid product ID' });
+                }
+
+                // Get the product to verify ownership
+                const product = await productsCollection.findOne({
+                    _id: new ObjectId(id)
+                });
+
+                if (!product) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Product not found'
+                    });
+                }
+
+                // 🔒 Security check: Verify the vendor can only delete their own products
+                if (vendorEmail && product.vendorEmail !== vendorEmail) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You can only delete your own products'
+                    });
+                }
+
+                const result = await productsCollection.deleteOne({
+                    _id: new ObjectId(id),
+                });
+
+                res.json({
+                    success: true,
+                    message: 'Product deleted successfully',
+                    deletedCount: result.deletedCount
+                });
+            } catch (error) {
+                res.status(500).send({ message: "Failed to delete product" });
             }
         });
 
@@ -244,6 +258,26 @@ async function run() {
                     return res.status(400).json({ message: 'Invalid product ID' });
                 }
 
+                // Get existing product to verify ownership
+                const existingProduct = await productsCollection.findOne({
+                    _id: new ObjectId(id)
+                });
+
+                if (!existingProduct) {
+                    return res.status(404).json({
+                        success: false,
+                        message: 'Product not found'
+                    });
+                }
+
+                // 🔒 Security check: Verify the vendor can only edit their own products
+                if (vendorEmail && existingProduct.vendorEmail !== vendorEmail) {
+                    return res.status(403).json({
+                        success: false,
+                        message: 'You can only edit your own products'
+                    });
+                }
+
                 // Build update object
                 const updateData = {
                     itemName,
@@ -253,7 +287,7 @@ async function run() {
                     date,
                     prices, // array with price history
                     status: status || 'pending',
-                    vendorEmail,
+                    vendorEmail: existingProduct.vendorEmail, // Keep original vendor email
                     updatedAt: new Date(),
                 };
 
@@ -263,8 +297,8 @@ async function run() {
                     { $set: updateData }
                 );
 
-                // Check if product was found and updated
-                if (result.matchedCount === 0) {
+                // Check if product was updated
+                if (result.modifiedCount === 0 && result.matchedCount === 0) {
                     return res.status(404).json({
                         success: false,
                         message: 'Product not found'
@@ -1385,6 +1419,26 @@ async function run() {
             }
         });
 
+        // Get all orders (ADMIN)
+        app.get('/all-orders', async (req, res) => {
+            try {
+                const orders = await ordersCollection
+                    .find({})
+                    .sort({ orderDate: -1 })
+                    .toArray();
+
+                res.json(orders || []);
+
+            } catch (error) {
+                console.error('Error fetching all orders:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching all orders',
+                    error: error.message
+                });
+            }
+        });
+
         // Get specific order details by ID
         app.get('/order/:id', async (req, res) => {
             try {
@@ -1450,6 +1504,92 @@ async function run() {
                 res.status(500).json({
                     success: false,
                     message: 'Error fetching statistics',
+                    error: error.message
+                });
+            }
+        });
+
+        // Get admin dashboard stats
+        app.get('/admin-stats', async (req, res) => {
+            try {
+                const totalUsers = await usersCollection.countDocuments();
+                const totalProducts = await productsCollection.countDocuments();
+                const totalOrders = await ordersCollection.countDocuments();
+                
+                const revenueData = await ordersCollection.aggregate([
+                    {
+                        $group: {
+                            _id: null,
+                            totalRevenue: { $sum: '$amount' },
+                            completedOrders: {
+                                $sum: {
+                                    $cond: [{ $eq: ['$paymentStatus', 'completed'] }, 1, 0]
+                                }
+                            },
+                            pendingOrders: {
+                                $sum: {
+                                    $cond: [{ $eq: ['$paymentStatus', 'pending'] }, 1, 0]
+                                }
+                            }
+                        }
+                    }
+                ]).toArray();
+
+                const revenue = revenueData.length > 0 ? revenueData[0] : { totalRevenue: 0, completedOrders: 0, pendingOrders: 0 };
+
+                res.json({
+                    totalUsers,
+                    totalProducts,
+                    totalOrders,
+                    totalRevenue: revenue.totalRevenue || 0,
+                    completedOrders: revenue.completedOrders || 0,
+                    pendingOrders: revenue.pendingOrders || 0
+                });
+
+            } catch (error) {
+                console.error('Error fetching admin stats:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching admin statistics',
+                    error: error.message
+                });
+            }
+        });
+
+        // Get vendor dashboard stats
+        app.get('/vendor-stats/:email', async (req, res) => {
+            try {
+                const { email } = req.params;
+
+                const totalProducts = await productsCollection.countDocuments({ vendorEmail: email });
+                const totalAdvertisements = await client.db('PriceBazar').collection('advertisements').countDocuments({ vendorEmail: email });
+
+                // Calculate vendor sales
+                const salesData = await ordersCollection.aggregate([
+                    { $match: { marketName: { $exists: true } } },
+                    {
+                        $group: {
+                            _id: null,
+                            totalSales: { $sum: '$amount' },
+                            totalOrdersReceived: { $sum: 1 }
+                        }
+                    }
+                ]).toArray();
+
+                const sales = salesData.length > 0 ? salesData[0] : { totalSales: 0, totalOrdersReceived: 0 };
+
+                res.json({
+                    totalProducts,
+                    totalAdvertisements,
+                    totalSales: sales.totalSales || 0,
+                    totalOrdersReceived: sales.totalOrdersReceived || 0
+                });
+
+            } catch (error) {
+                console.error('Error fetching vendor stats:', error);
+                res.status(500).json({
+                    success: false,
+                    message: 'Error fetching vendor statistics',
                     error: error.message
                 });
             }

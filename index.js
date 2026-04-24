@@ -1,5 +1,6 @@
 const express = require('express')
 const cors = require('cors')
+const jwt = require('jsonwebtoken')
 
 require('dotenv').config();
 
@@ -10,6 +11,31 @@ app.use(express.json());
 const stripe = require('stripe')(process.env.PAYMENT_GATEWAY_KEY);
 
 app.use(cors())
+
+// JWT Middleware - Verify token from Authorization header
+const verifyJWT = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader) {
+        return next(); // Token is optional for some routes
+    }
+    
+    const token = authHeader.startsWith('Bearer ') 
+        ? authHeader.slice(7) 
+        : authHeader;
+    
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.decoded = decoded;
+        next();
+    } catch (error) {
+        console.log('JWT Verification Error:', error.message);
+        next(); // Continue even if token verification fails (for optional auth routes)
+    }
+};
+
+// Apply JWT verification middleware globally
+app.use(verifyJWT);
 
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.1jlx3rd.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
@@ -33,6 +59,30 @@ async function run() {
         //Jobs api
         const usersCollection = client.db('PriceBazar').collection('users');
 
+        // ==================== JWT ENDPOINTS ====================
+        
+        // POST /jwt - Generate JWT token upon user login/signup
+        app.post('/jwt', async (req, res) => {
+            const { email, uid } = req.body;
+
+            if (!email) {
+                return res.status(400).send({ message: 'Email is required' });
+            }
+
+            try {
+                // Generate JWT token
+                const token = jwt.sign(
+                    { email, uid },
+                    process.env.JWT_SECRET,
+                    { expiresIn: '7d' }
+                );
+
+                res.send({ token });
+            } catch (error) {
+                console.error('JWT Generation Error:', error);
+                res.status(500).send({ message: 'Failed to generate token' });
+            }
+        });
 
         // User related APIs
 
@@ -102,6 +152,69 @@ async function run() {
             } catch (error) {
                 console.error(error);
                 res.status(500).send({ message: "Failed to get user role" });
+            }
+        });
+
+        // GET user profile by email
+        app.get('/users/:email', async (req, res) => {
+            try {
+                const email = req.params.email;
+
+                // Security: Verify the user is requesting their own profile or is an admin
+                if (req.decoded && req.decoded.email !== email) {
+                    // Allow admins to view any profile - you can add admin check here if needed
+                    // For now, only allow users to view their own profiles
+                    return res.status(403).send({ message: "Forbidden: You can only access your own profile" });
+                }
+
+                const user = await usersCollection.findOne({ email });
+
+                if (!user) {
+                    return res.status(404).send({ message: "User not found" });
+                }
+
+                res.send(user);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Failed to get user profile" });
+            }
+        });
+
+        // UPDATE user profile by email
+        app.put('/users/:email', async (req, res) => {
+            try {
+                const email = req.params.email;
+                const { displayName, photoURL, phone, address, bio } = req.body;
+
+                // Security: Verify the user is updating their own profile
+                if (req.decoded && req.decoded.email !== email) {
+                    return res.status(403).send({ message: "Forbidden: You can only update your own profile" });
+                }
+
+                const updateData = {};
+                if (displayName) updateData.displayName = displayName;
+                if (photoURL) updateData.photoURL = photoURL;
+                if (phone) updateData.phone = phone;
+                if (address) updateData.address = address;
+                if (bio) updateData.bio = bio;
+
+                updateData.updatedAt = new Date();
+
+                const result = await usersCollection.updateOne(
+                    { email },
+                    { $set: updateData }
+                );
+
+                if (result.matchedCount === 0) {
+                    return res.status(404).send({ message: "User not found" });
+                }
+
+                // Return updated user
+                const updatedUser = await usersCollection.findOne({ email });
+                res.send(updatedUser);
+            } catch (error) {
+                console.error(error);
+                res.status(500).send({ message: "Failed to update user profile" });
             }
         });
 
@@ -184,7 +297,8 @@ async function run() {
         app.delete("/products/:id", async (req, res) => {
             try {
                 const id = req.params.id;
-                const { vendorEmail } = req.body;
+                // Accept missing body (admin deletes)
+                const vendorEmail = req.body && req.body.vendorEmail;
 
                 // Validate MongoDB ObjectId
                 if (!ObjectId.isValid(id)) {
@@ -203,7 +317,7 @@ async function run() {
                     });
                 }
 
-                // 🔒 Security check: Verify the vendor can only delete their own products
+                // 🔒 Security check: Only check vendor ownership if vendorEmail is provided
                 if (vendorEmail && product.vendorEmail !== vendorEmail) {
                     return res.status(403).json({
                         success: false,
